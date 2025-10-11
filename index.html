@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube 채널 태그 분석기</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Noto Sans KR', sans-serif;
+        }
+        .loader {
+            border-top-color: #3498db;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        /* Modal styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.4);
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background-color: #fefefe;
+            margin: auto;
+            padding: 20px;
+            border-radius: 0.75rem;
+            width: 90%;
+            max-width: 700px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            position: relative;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .close-button {
+            color: #aaa;
+            position: absolute;
+            top: 10px;
+            right: 15px;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .close-button:hover,
+        .close-button:focus {
+            color: black;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        .video-list-container {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding-right: 10px; /* For scrollbar */
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 min-h-screen flex items-center justify-center p-4">
+
+    <div class="w-full max-w-4xl mx-auto bg-white rounded-2xl shadow-lg p-6 md:p-8">
+        <div class="text-center mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-900">YouTube 채널 태그 분석기</h1>
+            <p class="text-gray-600 mt-2">채널의 모든 영상 태그를 분석하여 가장 인기 있는 태그를 찾아보세요.</p>
+        </div>
+
+        <!-- Input Section -->
+        <div class="space-y-4 mb-8">
+            <div>
+                <label for="apiKey" class="block text-sm font-medium text-gray-700 mb-1">YouTube API 키</label>
+                <input type="password" id="apiKey" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="API 키를 입력하세요">
+                <p class="text-xs text-gray-500 mt-1">API 키는 브라우저에만 저장되며 외부로 전송되지 않습니다. <a href="https://developers.google.com/youtube/v3/getting-started" target="_blank" class="text-blue-600 hover:underline">API 키 발급 방법</a></p>
+            </div>
+            <div>
+                <label for="channelUrl" class="block text-sm font-medium text-gray-700 mb-1">YouTube 채널 URL</label>
+                <input type="text" id="channelUrl" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="분석할 채널의 URL을 입력하세요 (예: https://www.youtube.com/@Google)">
+            </div>
+            <button id="analyzeBtn" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                분석 시작
+            </button>
+        </div>
+
+        <!-- Status & Results Section -->
+        <div id="statusContainer" class="text-center my-4">
+            <div id="loader" class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-12 w-12 mx-auto hidden"></div>
+            <p id="statusText" class="text-gray-600 font-medium mt-2"></p>
+            <p id="errorText" class="text-red-500 font-medium mt-2"></p>
+        </div>
+        
+        <div id="resultsContainer" class="hidden">
+            <h2 id="channelTitle" class="text-2xl font-bold text-center mb-6"></h2>
+            <div class="overflow-x-auto bg-gray-50 p-4 rounded-lg">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-100">
+                        <tr>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider w-16">순위</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">태그</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider w-24">횟수</th>
+                        </tr>
+                    </thead>
+                    <tbody id="resultsTable" class="bg-white divide-y divide-gray-200">
+                        <!-- Results will be inserted here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Video List Modal -->
+    <div id="videoListModal" class="modal">
+        <div class="modal-content">
+            <span class="close-button" id="closeModalBtn">&times;</span>
+            <h3 id="modalTagTitle" class="text-xl font-bold mb-4"></h3>
+            <div id="videoList" class="video-list-container space-y-4">
+                <!-- Videos will be loaded here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const apiKeyInput = document.getElementById('apiKey');
+        const channelUrlInput = document.getElementById('channelUrl');
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        const loader = document.getElementById('loader');
+        const statusText = document.getElementById('statusText');
+        const errorText = document.getElementById('errorText');
+        const resultsContainer = document.getElementById('resultsContainer');
+        const channelTitle = document.getElementById('channelTitle');
+        const resultsTable = document.getElementById('resultsTable');
+        const videoListModal = document.getElementById('videoListModal');
+        const closeModalBtn = document.getElementById('closeModalBtn');
+        const modalTagTitle = document.getElementById('modalTagTitle');
+        const videoList = document.getElementById('videoList');
+
+        // Global variable to store all video data indexed by tag
+        let allVideoData = {}; // { 'tag': [{ id: 'videoId', title: 'Video Title', thumbnailUrl: 'url' }] }
+
+        // Event Listeners
+        analyzeBtn.addEventListener('click', handleAnalysis);
+        closeModalBtn.addEventListener('click', () => videoListModal.style.display = 'none');
+        window.addEventListener('click', (event) => {
+            if (event.target == videoListModal) {
+                videoListModal.style.display = 'none';
+            }
+        });
+        
+        // Save and load API key from localStorage
+        apiKeyInput.value = localStorage.getItem('youtubeApiKey') || '';
+        apiKeyInput.addEventListener('change', () => {
+            localStorage.setItem('youtubeApiKey', apiKeyInput.value);
+        });
+
+        async function handleAnalysis() {
+            // Reset UI
+            resultsContainer.classList.add('hidden');
+            errorText.textContent = '';
+            statusText.textContent = '';
+            loader.classList.remove('hidden');
+            analyzeBtn.disabled = true;
+            analyzeBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            allVideoData = {}; // Clear previous video data
+
+            const apiKey = apiKeyInput.value.trim();
+            const channelUrl = channelUrlInput.value.trim();
+
+            if (!apiKey || !channelUrl) {
+                showError("API 키와 채널 URL을 모두 입력해주세요.");
+                resetUIState();
+                return;
+            }
+
+            try {
+                statusText.textContent = "채널 정보 확인 중...";
+                const channelId = await getChannelIdFromUrl(channelUrl, apiKey);
+                if (!channelId) {
+                    showError("채널을 찾을 수 없습니다. URL이 정확한지 또는 채널이 존재하는지 확인해주세요.");
+                    resetUIState();
+                    return;
+                }
+                
+                statusText.textContent = "채널 정보 및 업로드 목록 로딩 중...";
+                const channelData = await getChannelData(channelId, apiKey);
+                channelTitle.textContent = `${channelData.channelTitle} - 태그 분석 결과`;
+
+                statusText.textContent = "영상 목록 가져오는 중...";
+                const videoDetailsList = await getAllVideoDetails(channelData.uploadsPlaylistId, apiKey); // Get full video details
+                 if (videoDetailsList.length === 0) {
+                    showError("채널에 영상이 없거나 비공개 상태입니다.");
+                    resetUIState();
+                    return;
+                }
+
+                statusText.textContent = `총 ${videoDetailsList.length}개 영상의 태그를 분석 중입니다...`;
+                const allTagsWithVideos = processVideoDetailsForTags(videoDetailsList); // Process all details
+                
+                statusText.textContent = "태그 분석 완료! 결과 정리 중...";
+                const tagCounts = countTags(allTagsWithVideos);
+                displayResults(tagCounts);
+
+            } catch (error) {
+                console.error("Analysis Error:", error);
+                showError(error.message || "알 수 없는 오류가 발생했습니다. 콘솔을 확인해주세요.");
+            } finally {
+                resetUIState();
+            }
+        }
+
+        function showError(message) {
+            errorText.textContent = message;
+        }
+
+        function resetUIState() {
+            loader.classList.add('hidden');
+            statusText.textContent = '';
+            analyzeBtn.disabled = false;
+            analyzeBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+        }
+        
+        // Extracts channel ID from various URL formats
+        async function getChannelIdFromUrl(url, apiKey) {
+            // Standard channel ID
+            let match = url.match(/youtube\.com\/channel\/([a-zA-Z0-9_-]+)/);
+            if (match) return match[1];
+
+            // Custom URL or Handle
+            match = url.match(/youtube\.com\/(?:c\/|@)?([a-zA-Z0-9_.-]+)/);
+            if (!match) return null;
+
+            const identifier = match[1];
+            
+            // Search API to find channel by handle/custom name
+            statusText.textContent = "커스텀 URL/핸들 해석 중...";
+            const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(identifier)}&type=channel&key=${apiKey}`;
+            const response = await fetch(searchUrl);
+            const data = await response.json();
+
+            if (!response.ok || data.error) {
+                const errorMessage = data.error ? data.error.message : `HTTP status ${response.status}`;
+                throw new Error(`채널 검색 중 오류가 발생했습니다: ${errorMessage}. API 키가 유효한지 확인해주세요.`);
+            }
+            
+            if (data.items && data.items.length > 0) {
+                // Find the best match, check snippet.customUrl or snippet.title for exactness (case-insensitive)
+                 for (const item of data.items) {
+                    if (item.snippet.channelTitle.toLowerCase() === identifier.toLowerCase() || (item.snippet.customUrl && item.snippet.customUrl.toLowerCase() === identifier.toLowerCase())) {
+                         return item.snippet.channelId;
+                    }
+                }
+                // Fallback to the first result if no perfect match is found
+                return data.items[0].snippet.channelId;
+            }
+            return null;
+        }
+
+
+        async function getChannelData(channelId, apiKey) {
+            const url = `https://www.googleapis.com/youtube/v3/channels?part=snippet,contentDetails&id=${channelId}&key=${apiKey}`;
+            const response = await fetch(url);
+            if (!response.ok) throw new Error("채널 정보를 가져올 수 없습니다. API 키를 확인하세요.");
+            const data = await response.json();
+            if (!data.items || data.items.length === 0) throw new Error("채널을 찾을 수 없습니다.");
+            
+            const channel = data.items[0];
+            return {
+                channelTitle: channel.snippet.title,
+                uploadsPlaylistId: channel.contentDetails.relatedPlaylists.uploads
+            };
+        }
+
+        // Modified to get full video details (id, title, thumbnailUrl, tags)
+        async function getAllVideoDetails(playlistId, apiKey) {
+            let videoIds = [];
+            let nextPageToken = '';
+            let count = 0;
+            do {
+                const url = `https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&playlistId=${playlistId}&maxResults=50&pageToken=${nextPageToken}&key=${apiKey}`;
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (data.error) throw new Error(`영상 목록을 가져오는 중 오류 발생: ${data.error.message}`);
+                
+                data.items.forEach(item => videoIds.push(item.contentDetails.videoId));
+                nextPageToken = data.nextPageToken;
+
+                count += data.items.length;
+                statusText.textContent = `영상 ID 가져오는 중... (${count}개)`;
+
+            } while (nextPageToken);
+
+            let allVideoDetails = [];
+            // Fetch snippet (title, tags, thumbnails) for each videoId
+            for (let i = 0; i < videoIds.length; i += 50) {
+                const videoIdChunk = videoIds.slice(i, i + 50);
+                const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${videoIdChunk.join(',')}&key=${apiKey}`;
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (data.error) throw new Error(`영상 세부 정보를 가져오는 중 오류 발생: ${data.error.message}`);
+
+                data.items.forEach(item => {
+                    allVideoDetails.push({
+                        id: item.id,
+                        title: item.snippet.title,
+                        tags: item.snippet.tags || [], // Ensure tags array exists
+                        thumbnailUrl: item.snippet.thumbnails.medium.url // Or default/high
+                    });
+                });
+                statusText.textContent = `총 ${videoIds.length}개 중 ${Math.min(i + 50, videoIds.length)}개 영상 세부 정보 분석 완료...`;
+            }
+            return allVideoDetails;
+        }
+
+        // Process video details to populate allVideoData global variable
+        function processVideoDetailsForTags(videoDetailsList) {
+            const allTags = [];
+            videoDetailsList.forEach(video => {
+                video.tags.forEach(tag => {
+                    const lowerCaseTag = tag.toLowerCase();
+                    allTags.push(lowerCaseTag);
+
+                    if (!allVideoData[lowerCaseTag]) {
+                        allVideoData[lowerCaseTag] = [];
+                    }
+                    // Avoid adding duplicate video entries for the same tag (if a video has the same tag multiple times)
+                    if (!allVideoData[lowerCaseTag].some(v => v.id === video.id)) {
+                        allVideoData[lowerCaseTag].push({
+                            id: video.id,
+                            title: video.title,
+                            thumbnailUrl: video.thumbnailUrl
+                        });
+                    }
+                });
+            });
+            return allTags; // Return raw tags for counting
+        }
+
+        function countTags(tags) {
+            const tagCounts = {};
+            tags.forEach(tag => {
+                tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+            });
+            
+            return Object.entries(tagCounts)
+                         .map(([tag, count]) => ({ tag, count }))
+                         .sort((a, b) => b.count - a.count);
+        }
+
+        function displayResults(sortedTags) {
+            resultsTable.innerHTML = ''; // Clear previous results
+            if (sortedTags.length === 0) {
+                 resultsTable.innerHTML = '<tr><td colspan="3" class="text-center py-4">분석할 태그가 없습니다.</td></tr>';
+            } else {
+                sortedTags.forEach((item, index) => {
+                    const row = document.createElement('tr');
+                    const tagCell = document.createElement('td');
+                    tagCell.className = "px-6 py-4 whitespace-nowrap text-sm text-blue-600 hover:underline cursor-pointer";
+                    tagCell.textContent = item.tag;
+                    tagCell.onclick = () => showVideosForTag(item.tag); // Add click handler
+
+                    row.innerHTML = `
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${index + 1}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${item.count}</td>
+                    `;
+                    row.insertBefore(tagCell, row.children[1]); // Insert tagCell after rank
+                    resultsTable.appendChild(row);
+                });
+            }
+            resultsContainer.classList.remove('hidden');
+        }
+
+        function showVideosForTag(tag) {
+            modalTagTitle.textContent = `#${tag} 태그 영상 목록`;
+            videoList.innerHTML = ''; // Clear previous list
+
+            const videos = allVideoData[tag] || [];
+            if (videos.length === 0) {
+                videoList.innerHTML = '<p class="text-center text-gray-600">이 태그를 포함하는 영상이 없습니다.</p>';
+            } else {
+                videos.forEach(video => {
+                    const videoCard = document.createElement('div');
+                    videoCard.className = "flex items-center space-x-4 p-2 border border-gray-200 rounded-lg bg-white hover:bg-gray-50 transition-colors duration-200";
+                    videoCard.innerHTML = `
+                        <a href="https://www.youtube.com/watch?v=${video.id}" target="_blank" class="flex-shrink-0">
+                            <img src="${video.thumbnailUrl}" alt="${video.title}" class="w-24 h-16 object-cover rounded-md">
+                        </a>
+                        <div class="flex-grow">
+                            <a href="https://www.youtube.com/watch?v=${video.id}" target="_blank" class="block text-base font-semibold text-blue-700 hover:underline">
+                                ${video.title}
+                            </a>
+                            <p class="text-sm text-gray-500">ID: ${video.id}</p>
+                        </div>
+                    `;
+                    videoList.appendChild(videoCard);
+                });
+            }
+            videoListModal.style.display = 'flex'; // Show modal
+        }
+
+    </script>
+</body>
+</html>
