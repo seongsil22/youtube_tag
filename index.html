@@ -227,39 +227,74 @@
             analyzeBtn.classList.remove('opacity-50', 'cursor-not-allowed');
         }
         
-        // Extracts channel ID from various URL formats
+        // [수정됨] Extracts channel ID from various URL formats
         async function getChannelIdFromUrl(url, apiKey) {
-            // Standard channel ID
-            let match = url.match(/youtube\.com\/channel\/([a-zA-Z0-9_-]+)/);
+            // 1. Standard channel ID (UC...)
+            let match = url.match(/youtube\.com\/channel\/([a-zA-Z0-9_-]{24})/);
             if (match) return match[1];
 
-            // Custom URL or Handle
-            match = url.match(/youtube\.com\/(?:c\/|@)?([a-zA-Z0-9_.-]+)/);
-            if (!match) return null;
-
-            const identifier = match[1];
-            
-            // Search API to find channel by handle/custom name
-            statusText.textContent = "커스텀 URL/핸들 해석 중...";
-            const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(identifier)}&type=channel&key=${apiKey}`;
-            const response = await fetch(searchUrl);
-            const data = await response.json();
-
-            if (!response.ok || data.error) {
-                const errorMessage = data.error ? data.error.message : `HTTP status ${response.status}`;
-                throw new Error(`채널 검색 중 오류가 발생했습니다: ${errorMessage}. API 키가 유효한지 확인해주세요.`);
-            }
-            
-            if (data.items && data.items.length > 0) {
-                // Find the best match, check snippet.customUrl or snippet.title for exactness (case-insensitive)
-                 for (const item of data.items) {
-                    if (item.snippet.channelTitle.toLowerCase() === identifier.toLowerCase() || (item.snippet.customUrl && item.snippet.customUrl.toLowerCase() === identifier.toLowerCase())) {
-                         return item.snippet.channelId;
-                    }
+            // 2. Handle (@handle)
+            match = url.match(/youtube\.com\/@([a-zA-Z0-9_.-]+)/);
+            if (match) {
+                const handle = match[1];
+                statusText.textContent = `@${handle} 핸들로 채널 ID 조회 중... (1 쿼터 소모)`;
+                const apiUrl = `https://www.googleapis.com/youtube/v3/channels?part=id&forHandle=${encodeURIComponent(handle)}&key=${apiKey}`;
+                const response = await fetch(apiUrl);
+                const data = await response.json();
+                if (data.error) throw new Error(`핸들 조회 오류: ${data.error.message}`);
+                if (data.items && data.items.length > 0) {
+                    return data.items[0].id;
                 }
-                // Fallback to the first result if no perfect match is found
-                return data.items[0].snippet.channelId;
+                throw new Error(`@${handle} 핸들에 해당하는 채널을 찾을 수 없습니다.`);
             }
+
+            // 3. Custom URL (/c/customUrl)
+            match = url.match(/youtube\.com\/c\/([a-zA-Z0-9_.-]+)/);
+            if (match) {
+                const customUrl = match[1];
+                statusText.textContent = `커스텀 URL로 채널 ID 검색 중... (100 쿼터 소모)`;
+                // Custom URLs don't have a direct lookup, we must use search.
+                const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(customUrl)}&type=channel&key=${apiKey}`;
+                const response = await fetch(searchUrl);
+                const data = await response.json();
+
+                if (data.error) throw new Error(`커스텀 URL 검색 오류: ${data.error.message}`);
+                
+                if (data.items && data.items.length > 0) {
+                    // Find the exact match for the custom URL
+                    for (const item of data.items) {
+                        if (item.snippet.customUrl && item.snippet.customUrl.toLowerCase() === customUrl.toLowerCase()) {
+                            return item.snippet.channelId;
+                        }
+                    }
+                    // Fallback: If no exact custom URL match, check title (less reliable)
+                    for (const item of data.items) {
+                         if (item.snippet.channelTitle.toLowerCase() === customUrl.toLowerCase()) {
+                             return item.snippet.channelId;
+                         }
+                    }
+                    // Fallback: return first result (least reliable, but original behavior)
+                    return data.items[0].snippet.channelId;
+                }
+                throw new Error(`'${customUrl}'에 해당하는 채널을 찾을 수 없습니다.`);
+            }
+
+            // 4. User URL (/user/username) - Legacy
+             match = url.match(/youtube\.com\/user\/([a-zA-Z0-9_.-]+)/);
+             if (match) {
+                 const username = match[1];
+                 statusText.textContent = `레거시 사용자 이름으로 채널 ID 조회 중... (1 쿼터 소모)`;
+                 const apiUrl = `https://www.googleapis.com/youtube/v3/channels?part=id&forUsername=${encodeURIComponent(username)}&key=${apiKey}`;
+                 const response = await fetch(apiUrl);
+                 const data = await response.json();
+                 if (data.error) throw new Error(`사용자 이름 조회 오류: ${data.error.message}`);
+                 if (data.items && data.items.length > 0) {
+                     return data.items[0].id;
+                 }
+                 throw new Error(`'${username}' 사용자 이름을 가진 채널을 찾을 수 없습니다.`);
+             }
+
+            // If no match
             return null;
         }
 
@@ -313,7 +348,7 @@
                         id: item.id,
                         title: item.snippet.title,
                         tags: item.snippet.tags || [], // Ensure tags array exists
-                        thumbnailUrl: item.snippet.thumbnails.medium.url // Or default/high
+                        thumbnailUrl: (item.snippet.thumbnails.medium || item.snippet.thumbnails.default).url // Fallback thumbnail
                     });
                 });
                 statusText.textContent = `총 ${videoIds.length}개 중 ${Math.min(i + 50, videoIds.length)}개 영상 세부 정보 분석 완료...`;
@@ -352,8 +387,8 @@
             });
             
             return Object.entries(tagCounts)
-                         .map(([tag, count]) => ({ tag, count }))
-                         .sort((a, b) => b.count - a.count);
+                        .map(([tag, count]) => ({ tag, count }))
+                        .sort((a, b) => b.count - a.count);
         }
 
         function displayResults(sortedTags) {
@@ -410,3 +445,4 @@
     </script>
 </body>
 </html>
+
